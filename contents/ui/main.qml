@@ -10,7 +10,6 @@ Item {
     property var pending: null
     property bool ignoreTile: false
     property var pointerSnapIds: ({})
-    property var trackedIds: ({})
 
     DBusCall {
         id: tabBoxCall
@@ -250,36 +249,47 @@ Item {
         startAssist(window, side, fromPointer);
     }
 
-    function trackWindow(window) {
-        if (!window || window.deleted) {
-            return;
-        }
-        const id = windowId(window);
-        if (root.trackedIds[id]) {
-            return;
-        }
-        root.trackedIds[id] = true;
+    Instantiator {
+        model: WindowModel {}
+        delegate: Connections {
+            required property var window
+            target: window
+            ignoreUnknownSignals: true
 
-        window.interactiveMoveResizeStarted.connect(function () {
-            root.pointerSnapIds[id] = true;
-        });
-        window.tileChanged.connect(function () {
-            if (window.move || window.resize) {
-                return;
+            function onInteractiveMoveResizeStarted() {
+                if (!window) {
+                    return;
+                }
+                root.pointerSnapIds[root.windowId(window)] = true;
+                console.log("snap-assist: move started", window.caption);
             }
-            const fromPointer = !!root.pointerSnapIds[id];
-            delete root.pointerSnapIds[id];
-            onHalfTile(window, fromPointer);
-        });
-        window.interactiveMoveResizeFinished.connect(function () {
-            onHalfTile(window, true);
-            delete root.pointerSnapIds[id];
-        });
-        window.closed.connect(function () {
-            if (root.pending && root.pending.source === window) {
-                cancelPending();
+
+            function onTileChanged() {
+                if (!window || window.move || window.resize) {
+                    return;
+                }
+                const id = root.windowId(window);
+                const fromPointer = !!root.pointerSnapIds[id];
+                delete root.pointerSnapIds[id];
+                console.log("snap-assist: tileChanged", window.caption, fromPointer ? "pointer" : "keyboard");
+                root.onHalfTile(window, fromPointer);
             }
-        });
+
+            function onInteractiveMoveResizeFinished() {
+                if (!window) {
+                    return;
+                }
+                console.log("snap-assist: move finished", window.caption);
+                root.onHalfTile(window, true);
+                delete root.pointerSnapIds[root.windowId(window)];
+            }
+
+            function onClosed() {
+                if (root.pending && root.pending.source === window) {
+                    root.cancelPending();
+                }
+            }
+        }
     }
 
     Connections {
@@ -298,10 +308,8 @@ Item {
                 cancelPending();
                 return;
             }
+            console.log("snap-assist: activated", window.caption);
             tileSelected(window);
-        }
-        function onWindowAdded(window) {
-            trackWindow(window);
         }
         function onWindowRemoved(window) {
             if (root.pending && root.pending.source === window) {
@@ -394,10 +402,6 @@ Item {
     }
 
     Component.onCompleted: {
-        const windows = allWindows();
-        for (let i = 0; i < windows.length; i++) {
-            trackWindow(windows[i]);
-        }
-        console.log("snap-assist: loaded (qml), tracking", windows.length, "windows");
+        console.log("snap-assist: loaded (qml)");
     }
 }
