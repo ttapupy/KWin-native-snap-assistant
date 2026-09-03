@@ -1,35 +1,82 @@
-const QUICK_TILE_NONE = 0;
-const QUICK_TILE_LEFT = 1;
-const QUICK_TILE_RIGHT = 2;
+const MAXIMIZE_AREA = (typeof KWin !== "undefined" && KWin.MaximizeArea !== undefined)
+    ? KWin.MaximizeArea
+    : 2;
 
 let pending = null;
 let ignoreTile = false;
 
-function halfSide(mode) {
-    const value = Number(mode);
-    if (value === QUICK_TILE_LEFT) {
+function approx(a, b, epsilon) {
+    return Math.abs(a - b) <= epsilon;
+}
+
+function halfSideFromTile(window) {
+    const tile = window.tile;
+    if (!tile || !tile.relativeGeometry) {
+        return null;
+    }
+    const r = tile.relativeGeometry;
+    if (!approx(r.width, 0.5, 0.08) || !approx(r.height, 1.0, 0.08)) {
+        return null;
+    }
+    if (approx(r.x, 0, 0.08)) {
         return "left";
     }
-    if (value === QUICK_TILE_RIGHT) {
+    if (approx(r.x, 0.5, 0.08)) {
         return "right";
     }
     return null;
 }
 
+function halfSideFromGeometry(window) {
+    const area = workspace.clientArea(MAXIMIZE_AREA, window);
+    const geo = window.frameGeometry;
+    if (!area || !geo) {
+        return null;
+    }
+    const halfWidth = area.width / 2;
+    if (!approx(geo.y, area.y, 24) || !approx(geo.height, area.height, 24)) {
+        return null;
+    }
+    if (!approx(geo.width, halfWidth, 48)) {
+        return null;
+    }
+    if (approx(geo.x, area.x, 24)) {
+        return "left";
+    }
+    if (approx(geo.x, area.x + halfWidth, 24)) {
+        return "right";
+    }
+    return null;
+}
+
+function halfSide(window) {
+    return halfSideFromTile(window) || halfSideFromGeometry(window);
+}
+
 function isCandidate(window) {
     return window
+        && !window.deleted
         && window.normalWindow
-        && !window.specialWindow
         && !window.skipSwitcher
         && !window.minimized
         && !window.fullScreen;
 }
 
 function isOnCurrentDesktop(window) {
-    if (!window.desktops || window.desktops.length === 0) {
+    if (window.onAllDesktops) {
         return true;
     }
-    return window.desktops.indexOf(workspace.currentDesktop) !== -1;
+    const desktops = window.desktops;
+    if (!desktops || desktops.length === 0) {
+        return true;
+    }
+    const current = workspace.currentDesktop;
+    for (let i = 0; i < desktops.length; i++) {
+        if (desktops[i] === current) {
+            return true;
+        }
+    }
+    return false;
 }
 
 function hasOtherWindows(source) {
@@ -44,11 +91,6 @@ function hasOtherWindows(source) {
 }
 
 function openTabBox() {
-    // Plasma 6: TabBox is not a Workspace scripting slot. The supported way
-    // to invoke the same "Walk Through Windows" action as Alt+Tab/Meta+Tab is
-    // KGlobalAccel on the kwin component. KWin only *shows* TabBox when a
-    // modifier from that shortcut is currently held; otherwise it activates
-    // the next window immediately (KDEOneStepThroughWindows).
     callDBus(
         "org.kde.kglobalaccel",
         "/component/kwin",
@@ -59,7 +101,7 @@ function openTabBox() {
 }
 
 function openOverview() {
-    if (workspace.isEffectActive("overview")) {
+    if (workspace.isEffectActive && workspace.isEffectActive("overview")) {
         return;
     }
     callDBus(
@@ -80,14 +122,15 @@ function startAssist(window, side, fromPointer) {
         return;
     }
     if (!hasOtherWindows(window)) {
+        print("snap-assist: no other windows after tiling", window.caption);
         cancelPending();
         return;
     }
 
     pending = { source: window, side: side };
+    print("snap-assist: start", side, fromPointer ? "pointer" : "keyboard", window.caption);
 
     if (fromPointer) {
-        // Mouse snap: modifiers are not held, so TabBox will not stay open.
         openOverview();
     } else {
         openTabBox();
@@ -95,11 +138,11 @@ function startAssist(window, side, fromPointer) {
 }
 
 function onHalfTile(window, fromPointer) {
-    if (ignoreTile || !isCandidate(window)) {
+    if (ignoreTile || !window || window.deleted || !window.normalWindow) {
         return;
     }
 
-    const side = halfSide(window.quickTileMode);
+    const side = halfSide(window);
     if (!side) {
         if (pending && pending.source === window) {
             cancelPending();
@@ -128,7 +171,9 @@ function tileSelected(window) {
     }
     ignoreTile = false;
 
-    if (workspace.isEffectActive("overview")) {
+    print("snap-assist: tiled opposite", opposite, window.caption);
+
+    if (workspace.isEffectActive && workspace.isEffectActive("overview")) {
         callDBus(
             "org.kde.KWin",
             "/Effects",
@@ -143,10 +188,10 @@ function onWindowActivated(window) {
     if (!pending || !window || window === pending.source) {
         return;
     }
-    if (!isCandidate(window)) {
+    if (!isCandidate(window) || !isOnCurrentDesktop(window)) {
         return;
     }
-    if (halfSide(window.quickTileMode) === (pending.side === "left" ? "right" : "left")) {
+    if (halfSide(window) === (pending.side === "left" ? "right" : "left")) {
         cancelPending();
         return;
     }
@@ -154,7 +199,11 @@ function onWindowActivated(window) {
 }
 
 function trackWindow(window) {
-    window.quickTileModeChanged.connect(function () {
+    if (!window || window.deleted) {
+        return;
+    }
+
+    window.tileChanged.connect(function () {
         if (window.move || window.resize) {
             return;
         }
@@ -178,4 +227,4 @@ for (let i = 0; i < existing.length; i++) {
     trackWindow(existing[i]);
 }
 
-print("snap-assist: loaded");
+print("snap-assist: loaded, tracking", existing.length, "windows");
