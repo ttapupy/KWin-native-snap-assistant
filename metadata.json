@@ -1,7 +1,7 @@
 {
     "KPlugin": {
         "Name": "Snap Assist",
-        "Description": "After quick-tiling a window to the left or right half, open the native window switcher so another window can be tiled to the opposite side",
+        "Description": "After quick-tiling a window left or right, pick another window for the opposite half",
         "Icon": "preferences-system-windows",
         "Authors": [
             {
@@ -10,11 +10,11 @@
             }
         ],
         "Id": "snap-assist",
-        "Version": "1.0",
+        "Version": "1.1",
         "License": "GPL-3.0-or-later",
         "Website": ""
     },
-    "X-Plasma-API": "javascript",
-    "X-Plasma-MainScript": "code/main.js",
+    "X-Plasma-API": "declarativescript",
+    "X-Plasma-MainScript": "ui/main.qml",
     "KPackageStructure": "KWin/Script"
 }
