@@ -4,6 +4,28 @@ const MAXIMIZE_AREA = (typeof KWin !== "undefined" && KWin.MaximizeArea !== unde
 
 let pending = null;
 let ignoreTile = false;
+const pointerSnapIds = {};
+
+function windowId(window) {
+    return String(window.internalId);
+}
+
+function markPointerSnap(window) {
+    pointerSnapIds[windowId(window)] = true;
+}
+
+function consumePointerSnap(window) {
+    const id = windowId(window);
+    if (!pointerSnapIds[id]) {
+        return false;
+    }
+    delete pointerSnapIds[id];
+    return true;
+}
+
+function isPointerSnap(window) {
+    return !!pointerSnapIds[windowId(window)];
+}
 
 function approx(a, b, epsilon) {
     return Math.abs(a - b) <= epsilon;
@@ -91,12 +113,16 @@ function hasOtherWindows(source) {
 }
 
 function openTabBox() {
+    invokeKWinShortcut("Walk Through Windows");
+}
+
+function invokeKWinShortcut(name) {
     callDBus(
         "org.kde.kglobalaccel",
         "/component/kwin",
         "org.kde.kglobalaccel.Component",
         "invokeShortcut",
-        "Walk Through Windows"
+        name
     );
 }
 
@@ -104,13 +130,9 @@ function openOverview() {
     if (workspace.isEffectActive && workspace.isEffectActive("overview")) {
         return;
     }
-    callDBus(
-        "org.kde.KWin",
-        "/Effects",
-        "org.kde.kwin.Effects",
-        "toggleEffect",
-        "overview"
-    );
+    // TabBox will not stay open unless Alt/Meta is held (mouse snap never has that).
+    // Overview is the native picker that can be shown without modifiers.
+    invokeKWinShortcut("Overview");
 }
 
 function cancelPending() {
@@ -203,14 +225,19 @@ function trackWindow(window) {
         return;
     }
 
+    window.interactiveMoveResizeStarted.connect(function () {
+        markPointerSnap(window);
+    });
     window.tileChanged.connect(function () {
         if (window.move || window.resize) {
             return;
         }
-        onHalfTile(window, false);
+        onHalfTile(window, isPointerSnap(window));
+        consumePointerSnap(window);
     });
     window.interactiveMoveResizeFinished.connect(function () {
         onHalfTile(window, true);
+        consumePointerSnap(window);
     });
     window.closed.connect(function () {
         if (pending && pending.source === window) {
