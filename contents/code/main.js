@@ -81,7 +81,6 @@ function isCandidate(window) {
         && !window.deleted
         && window.normalWindow
         && !window.skipSwitcher
-        && !window.minimized
         && !window.fullScreen;
 }
 
@@ -127,23 +126,40 @@ function invokeKWinShortcut(name) {
     );
 }
 
+function runAfterEventLoop(callback) {
+    callDBus(
+        "org.kde.kglobalaccel",
+        "/component/kwin",
+        "org.kde.kglobalaccel.Component",
+        "shortcutNames",
+        function () {
+            callback();
+        }
+    );
+}
+
+function showOverviewNow() {
+    if (!pending) {
+        return;
+    }
+    if (workspace.isEffectActive && workspace.isEffectActive("overview")) {
+        return;
+    }
+    print("snap-assist: invoking Overview");
+    invokeKWinShortcut("Overview");
+}
+
 function openOverview() {
     if (overviewRequested) {
         return;
     }
-    if (workspace.isEffectActive && workspace.isEffectActive("overview")) {
-        overviewRequested = true;
-        return;
-    }
     overviewRequested = true;
-    print("snap-assist: opening overview");
-    callDBus(
-        "org.kde.KWin",
-        "/Effects",
-        "org.kde.kwin.Effects",
-        "toggleEffect",
-        "overview"
-    );
+    print("snap-assist: opening overview (deferred)");
+    // Wait until KWin has finished the mouse-release/move-grab. Calling
+    // Overview in that same stack opens it and the release immediately closes it.
+    runAfterEventLoop(function () {
+        runAfterEventLoop(showOverviewNow);
+    });
 }
 
 function cancelPending() {
@@ -187,9 +203,18 @@ function onHalfTile(window, fromPointer) {
     startAssist(window, side, fromPointer);
 }
 
+function focusWindow(window) {
+    if (!window || window.deleted) {
+        return;
+    }
+    workspace.raiseWindow(window);
+    workspace.activeWindow = window;
+}
+
 function tileSelected(window) {
     const source = pending.source;
     const opposite = pending.side === "left" ? "right" : "left";
+    const overviewOpen = workspace.isEffectActive && workspace.isEffectActive("overview");
     cancelPending();
 
     if (source && source.output && window.output !== source.output) {
@@ -197,25 +222,30 @@ function tileSelected(window) {
     }
 
     ignoreTile = true;
-    workspace.activeWindow = window;
+    if (window.minimized) {
+        window.minimized = false;
+    }
+    focusWindow(window);
     if (opposite === "left") {
         workspace.slotWindowQuickTileLeft();
     } else {
         workspace.slotWindowQuickTileRight();
     }
-    ignoreTile = false;
+    focusWindow(window);
 
     print("snap-assist: tiled opposite", opposite, window.caption);
 
-    if (workspace.isEffectActive && workspace.isEffectActive("overview")) {
-        callDBus(
-            "org.kde.KWin",
-            "/Effects",
-            "org.kde.kwin.Effects",
-            "toggleEffect",
-            "overview"
-        );
+    if (overviewOpen) {
+        invokeKWinShortcut("Overview");
     }
+
+    runAfterEventLoop(function () {
+        focusWindow(window);
+        runAfterEventLoop(function () {
+            focusWindow(window);
+            ignoreTile = false;
+        });
+    });
 }
 
 function onWindowActivated(window) {
