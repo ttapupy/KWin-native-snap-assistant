@@ -4,6 +4,7 @@ const MAXIMIZE_AREA = (typeof KWin !== "undefined" && KWin.MaximizeArea !== unde
 
 let pending = null;
 let ignoreTile = false;
+let overviewRequested = false;
 const pointerSnapIds = {};
 
 function windowId(window) {
@@ -127,35 +128,46 @@ function invokeKWinShortcut(name) {
 }
 
 function openOverview() {
-    if (workspace.isEffectActive && workspace.isEffectActive("overview")) {
+    if (overviewRequested) {
         return;
     }
-    // TabBox will not stay open unless Alt/Meta is held (mouse snap never has that).
-    // Overview is the native picker that can be shown without modifiers.
-    invokeKWinShortcut("Overview");
+    if (workspace.isEffectActive && workspace.isEffectActive("overview")) {
+        overviewRequested = true;
+        return;
+    }
+    overviewRequested = true;
+    print("snap-assist: opening overview");
+    callDBus(
+        "org.kde.KWin",
+        "/Effects",
+        "org.kde.kwin.Effects",
+        "toggleEffect",
+        "overview"
+    );
 }
 
 function cancelPending() {
     pending = null;
+    overviewRequested = false;
 }
 
 function startAssist(window, side, fromPointer) {
-    if (pending && pending.source === window && pending.side === side) {
-        return;
+    const alreadyPending = pending && pending.source === window && pending.side === side;
+    if (!alreadyPending) {
+        if (!hasOtherWindows(window)) {
+            print("snap-assist: no other windows after tiling", window.caption);
+            cancelPending();
+            return;
+        }
+        pending = { source: window, side: side };
+        print("snap-assist: start", side, fromPointer ? "pointer" : "keyboard", window.caption);
+        if (!fromPointer) {
+            openTabBox();
+        }
     }
-    if (!hasOtherWindows(window)) {
-        print("snap-assist: no other windows after tiling", window.caption);
-        cancelPending();
-        return;
-    }
-
-    pending = { source: window, side: side };
-    print("snap-assist: start", side, fromPointer ? "pointer" : "keyboard", window.caption);
 
     if (fromPointer) {
         openOverview();
-    } else {
-        openTabBox();
     }
 }
 
