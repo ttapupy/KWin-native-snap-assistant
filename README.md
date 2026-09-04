@@ -2,10 +2,12 @@
 
 A small Plasma 6 KWin script that completes a half-screen snap. After a window
 is quick-tiled to the left or right, it offers the other windows for the empty
-half of the screen.
+half of the screen. 
 
-Keyboard quick-tiling opens KWin's window switcher. Pointer quick-tiling opens
-the built-in visual picker after a short delay.
+Keyboard quick-tiling opens KWin's window switcher (native) and here we expect you've moved the window with the Meta + rigth / left arrow and you're still holding the Meta key. 
+
+Pointer quick-tiling opens
+a custom visual picker after a short delay that you can access with your mouse - so this one contradicts the naming `native` a little, but I just couldn't make it work in other way. 
 
 ## Install
 
@@ -31,6 +33,8 @@ kpackagetool6 --type=KWin/Script --remove snap-assist
 ```
 
 The equivalent short options are `-i`, `-u`, and `-r`.
+
+Actually after installation it is available also in Plasma setting GUI among other KWin scripts.
 
 ## Reload during development
 
@@ -81,6 +85,11 @@ under `~/.local/share/kwin/scripts/snap-assist/`.
 - Geometry changes from ordinary applications and keyboard tiling do not arm the
   fallback.
 - The picker waits 200 ms after a pointer snap so KWin can finish the operation.
+
+## Personal notes
+Shame on me, it was developed with AI tools. But at least it works. I think it is still something as in my knowledge the community couldn't provide a functional version since Plasma 6 was out and the old beloved [script](https://github.com/emvaized/kde-snap-assist) is not compatible with it. Also as I see, the Plasma Desktop project rarely focus on such UX related things, so we can cook what we have. 
+
+This code and the functionality can be improved and any kind of contribution is welcome!
 
 ## API references
 
