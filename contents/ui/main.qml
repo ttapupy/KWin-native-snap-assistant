@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Layouts
 import QtQuick.Window
 import org.kde.kwin
 
@@ -7,6 +6,14 @@ Item {
     id: root
 
     readonly property int maximizeArea: 2
+    readonly property int pickerDelayMs: 200
+    readonly property int refocusDelayMs: 50
+    readonly property int pickerDiagnosticsDelayMs: 100
+    readonly property int pointerGeometryDebounceMs: 120
+    readonly property real tileTolerance: 0.08
+    readonly property int geometryPositionTolerance: 24
+    readonly property int geometrySizeTolerance: 48
+
     property var pending: null
     property bool ignoreTile: false
     property var pointerSnapIds: ({})
@@ -23,14 +30,14 @@ Item {
 
     Timer {
         id: pickerTimer
-        interval: 200
+        interval: root.pickerDelayMs
         repeat: false
         onTriggered: root.showPicker()
     }
 
     Timer {
         id: refocusTimer
-        interval: 50
+        interval: root.refocusDelayMs
         repeat: false
         property var target: null
         onTriggered: {
@@ -41,13 +48,27 @@ Item {
 
     Timer {
         id: pickerDiagnosticsTimer
-        interval: 100
+        interval: root.pickerDiagnosticsDelayMs
         repeat: false
         onTriggered: root.logPickerState("after 100 ms")
     }
 
     function windowId(window) {
         return String(window.internalId);
+    }
+
+    function hasPointerSnap(window) {
+        return !!window && !!root.pointerSnapIds[windowId(window)];
+    }
+
+    function markPointerSnap(window) {
+        root.pointerSnapIds[windowId(window)] = true;
+    }
+
+    function clearPointerSnap(window) {
+        if (window) {
+            delete root.pointerSnapIds[windowId(window)];
+        }
     }
 
     function allWindows() {
@@ -64,13 +85,14 @@ Item {
             return null;
         }
         const r = tile.relativeGeometry;
-        if (!approx(r.width, 0.5, 0.08) || !approx(r.height, 1.0, 0.08)) {
+        if (!approx(r.width, 0.5, root.tileTolerance)
+                || !approx(r.height, 1.0, root.tileTolerance)) {
             return null;
         }
-        if (approx(r.x, 0, 0.08)) {
+        if (approx(r.x, 0, root.tileTolerance)) {
             return "left";
         }
-        if (approx(r.x, 0.5, 0.08)) {
+        if (approx(r.x, 0.5, root.tileTolerance)) {
             return "right";
         }
         return null;
@@ -83,16 +105,17 @@ Item {
             return null;
         }
         const halfWidth = area.width / 2;
-        if (!approx(geo.y, area.y, 24) || !approx(geo.height, area.height, 24)) {
+        if (!approx(geo.y, area.y, root.geometryPositionTolerance)
+                || !approx(geo.height, area.height, root.geometryPositionTolerance)) {
             return null;
         }
-        if (!approx(geo.width, halfWidth, 48)) {
+        if (!approx(geo.width, halfWidth, root.geometrySizeTolerance)) {
             return null;
         }
-        if (approx(geo.x, area.x, 24)) {
+        if (approx(geo.x, area.x, root.geometryPositionTolerance)) {
             return "left";
         }
-        if (approx(geo.x, area.x + halfWidth, 24)) {
+        if (approx(geo.x, area.x + halfWidth, root.geometryPositionTolerance)) {
             return "right";
         }
         return null;
@@ -176,7 +199,7 @@ Item {
             return;
         }
         const source = root.pending.source;
-        const opposite = root.pending.side === "left" ? "right" : "left";
+        const opposite = oppositeSide(root.pending.side);
         root.pending = null;
         hidePicker();
 
@@ -198,6 +221,10 @@ Item {
         console.log("snap-assist: tiled opposite", opposite, window.caption);
         refocusTimer.target = window;
         refocusTimer.restart();
+    }
+
+    function oppositeSide(side) {
+        return side === "left" ? "right" : "left";
     }
 
     function showPicker() {
@@ -279,22 +306,28 @@ Item {
 
             required property var window
 
+            function scheduleGeometryFallback() {
+                if (root.hasPointerSnap(windowTracker.window)) {
+                    geometryFallbackTimer.restart();
+                }
+            }
+
             Timer {
                 id: geometryFallbackTimer
-                interval: 120
+                interval: root.pointerGeometryDebounceMs
                 repeat: false
                 onTriggered: {
                     const trackedWindow = windowTracker.window;
                     if (!trackedWindow) {
                         return;
                     }
-                    const id = root.windowId(trackedWindow);
-                    if (!root.pointerSnapIds[id] || trackedWindow.move || trackedWindow.resize) {
+                    if (!root.hasPointerSnap(trackedWindow)
+                            || trackedWindow.move || trackedWindow.resize) {
                         return;
                     }
                     console.log("snap-assist: frameGeometryChanged fallback", trackedWindow.caption);
                     root.onHalfTile(trackedWindow, true);
-                    delete root.pointerSnapIds[id];
+                    root.clearPointerSnap(trackedWindow);
                 }
             }
 
@@ -308,7 +341,7 @@ Item {
                         return;
                     }
                     geometryFallbackTimer.stop();
-                    root.pointerSnapIds[root.windowId(trackedWindow)] = true;
+                    root.markPointerSnap(trackedWindow);
                     console.log("snap-assist: move started", trackedWindow.caption);
                 }
 
@@ -317,9 +350,8 @@ Item {
                     if (!trackedWindow || trackedWindow.move || trackedWindow.resize) {
                         return;
                     }
-                    if (root.pointerSnapIds[root.windowId(trackedWindow)]) {
-                        geometryFallbackTimer.restart();
-                    }
+                    // KWin may settle the final snap geometry without tileChanged.
+                    windowTracker.scheduleGeometryFallback();
                 }
 
                 function onTileChanged() {
@@ -327,11 +359,11 @@ Item {
                     if (!trackedWindow || trackedWindow.move || trackedWindow.resize) {
                         return;
                     }
-                    const id = root.windowId(trackedWindow);
-                    const fromPointer = !!root.pointerSnapIds[id];
+                    const fromPointer = root.hasPointerSnap(trackedWindow);
                     geometryFallbackTimer.stop();
-                    delete root.pointerSnapIds[id];
-                    console.log("snap-assist: tileChanged", trackedWindow.caption, fromPointer ? "pointer" : "keyboard");
+                    root.clearPointerSnap(trackedWindow);
+                    console.log("snap-assist: tileChanged", trackedWindow.caption,
+                                fromPointer ? "pointer" : "keyboard");
                     root.onHalfTile(trackedWindow, fromPointer);
                 }
 
@@ -341,15 +373,13 @@ Item {
                         return;
                     }
                     console.log("snap-assist: move finished", trackedWindow.caption);
-                    geometryFallbackTimer.restart();
+                    windowTracker.scheduleGeometryFallback();
                 }
 
                 function onClosed() {
                     geometryFallbackTimer.stop();
                     const trackedWindow = windowTracker.window;
-                    if (trackedWindow) {
-                        delete root.pointerSnapIds[root.windowId(trackedWindow)];
-                    }
+                    root.clearPointerSnap(trackedWindow);
                     if (root.pending && root.pending.source === trackedWindow) {
                         root.cancelPending();
                     }
@@ -370,7 +400,7 @@ Item {
             if (!isCandidate(window) || !isOnCurrentDesktop(window)) {
                 return;
             }
-            if (halfSide(window) === (root.pending.side === "left" ? "right" : "left")) {
+            if (halfSide(window) === oppositeSide(root.pending.side)) {
                 cancelPending();
                 return;
             }
@@ -386,6 +416,7 @@ Item {
 
     Window {
         id: picker
+        // This bypass hint lets a window created inside KWin render as an overlay.
         flags: Qt.FramelessWindowHint | Qt.X11BypassWindowManagerHint
         color: "#e01d1d1d"
         visible: false
