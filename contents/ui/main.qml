@@ -39,6 +39,13 @@ Item {
         }
     }
 
+    Timer {
+        id: pickerDiagnosticsTimer
+        interval: 100
+        repeat: false
+        onTriggered: root.logPickerState("after 100 ms")
+    }
+
     function windowId(window) {
         return String(window.internalId);
     }
@@ -142,8 +149,21 @@ Item {
 
     function hidePicker() {
         pickerTimer.stop();
-        picker.visible = false;
+        pickerDiagnosticsTimer.stop();
+        picker.hide();
         picker.candidates = [];
+    }
+
+    function logPickerState(stage) {
+        const screenName = picker.screen ? picker.screen.name : "<none>";
+        console.log("snap-assist: picker state", stage,
+                    "visible=" + picker.visible,
+                    "visibility=" + picker.visibility,
+                    "active=" + picker.active,
+                    "screen=" + screenName,
+                    "geometry=" + picker.x + "," + picker.y + " "
+                        + picker.width + "x" + picker.height,
+                    "candidates=" + picker.candidates.length);
     }
 
     function cancelPending() {
@@ -200,9 +220,12 @@ Item {
         picker.y = area.y;
         picker.width = halfWidth;
         picker.height = area.height;
-        picker.visible = true;
+        picker.showNormal();
         picker.requestActivate();
-        console.log("snap-assist: picker", side, candidates.length);
+        console.log("snap-assist: picker", side, candidates.length,
+                    Qt.rect(picker.x, picker.y, picker.width, picker.height));
+        logPickerState("immediate");
+        pickerDiagnosticsTimer.restart();
     }
 
     function startAssist(window, side, fromPointer) {
@@ -251,42 +274,85 @@ Item {
 
     Instantiator {
         model: WindowModel {}
-        delegate: Connections {
+        delegate: Item {
+            id: windowTracker
+
             required property var window
-            target: window
-            ignoreUnknownSignals: true
 
-            function onInteractiveMoveResizeStarted() {
-                if (!window) {
-                    return;
+            Timer {
+                id: geometryFallbackTimer
+                interval: 120
+                repeat: false
+                onTriggered: {
+                    const trackedWindow = windowTracker.window;
+                    if (!trackedWindow) {
+                        return;
+                    }
+                    const id = root.windowId(trackedWindow);
+                    if (!root.pointerSnapIds[id] || trackedWindow.move || trackedWindow.resize) {
+                        return;
+                    }
+                    console.log("snap-assist: frameGeometryChanged fallback", trackedWindow.caption);
+                    root.onHalfTile(trackedWindow, true);
+                    delete root.pointerSnapIds[id];
                 }
-                root.pointerSnapIds[root.windowId(window)] = true;
-                console.log("snap-assist: move started", window.caption);
             }
 
-            function onTileChanged() {
-                if (!window || window.move || window.resize) {
-                    return;
-                }
-                const id = root.windowId(window);
-                const fromPointer = !!root.pointerSnapIds[id];
-                delete root.pointerSnapIds[id];
-                console.log("snap-assist: tileChanged", window.caption, fromPointer ? "pointer" : "keyboard");
-                root.onHalfTile(window, fromPointer);
-            }
+            Connections {
+                target: windowTracker.window
+                ignoreUnknownSignals: true
 
-            function onInteractiveMoveResizeFinished() {
-                if (!window) {
-                    return;
+                function onInteractiveMoveResizeStarted() {
+                    const trackedWindow = windowTracker.window;
+                    if (!trackedWindow) {
+                        return;
+                    }
+                    geometryFallbackTimer.stop();
+                    root.pointerSnapIds[root.windowId(trackedWindow)] = true;
+                    console.log("snap-assist: move started", trackedWindow.caption);
                 }
-                console.log("snap-assist: move finished", window.caption);
-                root.onHalfTile(window, true);
-                delete root.pointerSnapIds[root.windowId(window)];
-            }
 
-            function onClosed() {
-                if (root.pending && root.pending.source === window) {
-                    root.cancelPending();
+                function onFrameGeometryChanged() {
+                    const trackedWindow = windowTracker.window;
+                    if (!trackedWindow || trackedWindow.move || trackedWindow.resize) {
+                        return;
+                    }
+                    if (root.pointerSnapIds[root.windowId(trackedWindow)]) {
+                        geometryFallbackTimer.restart();
+                    }
+                }
+
+                function onTileChanged() {
+                    const trackedWindow = windowTracker.window;
+                    if (!trackedWindow || trackedWindow.move || trackedWindow.resize) {
+                        return;
+                    }
+                    const id = root.windowId(trackedWindow);
+                    const fromPointer = !!root.pointerSnapIds[id];
+                    geometryFallbackTimer.stop();
+                    delete root.pointerSnapIds[id];
+                    console.log("snap-assist: tileChanged", trackedWindow.caption, fromPointer ? "pointer" : "keyboard");
+                    root.onHalfTile(trackedWindow, fromPointer);
+                }
+
+                function onInteractiveMoveResizeFinished() {
+                    const trackedWindow = windowTracker.window;
+                    if (!trackedWindow) {
+                        return;
+                    }
+                    console.log("snap-assist: move finished", trackedWindow.caption);
+                    geometryFallbackTimer.restart();
+                }
+
+                function onClosed() {
+                    geometryFallbackTimer.stop();
+                    const trackedWindow = windowTracker.window;
+                    if (trackedWindow) {
+                        delete root.pointerSnapIds[root.windowId(trackedWindow)];
+                    }
+                    if (root.pending && root.pending.source === trackedWindow) {
+                        root.cancelPending();
+                    }
                 }
             }
         }
@@ -320,10 +386,15 @@ Item {
 
     Window {
         id: picker
-        flags: Qt.FramelessWindowHint | Qt.BypassWindowManagerHint | Qt.WindowStaysOnTopHint | Qt.Tool
+        flags: Qt.FramelessWindowHint | Qt.X11BypassWindowManagerHint
         color: "#e01d1d1d"
         visible: false
         title: "Snap Assist"
+
+        onVisibleChanged: root.logPickerState("visibleChanged")
+        onVisibilityChanged: root.logPickerState("visibilityChanged")
+        onActiveChanged: root.logPickerState("activeChanged")
+        onScreenChanged: root.logPickerState("screenChanged")
 
         property var candidates: []
 
