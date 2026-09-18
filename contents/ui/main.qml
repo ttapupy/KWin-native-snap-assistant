@@ -450,6 +450,11 @@ Item {
             anchors.fill: parent
             anchors.margins: 24
             clip: true
+            // When the candidates fit, the grid has nothing to scroll, so let the
+            // press fall through to the cancel MouseArea below: an empty-space click
+            // then dismisses the picker. Escape cannot do that job, because a window
+            // created inside a KWin script gets no keyboard focus on Wayland.
+            interactive: contentHeight > height + 1
             cellWidth: Math.max(220, (width - 12) / 2)
             cellHeight: Math.max(160, cellWidth * 0.7)
             model: picker.candidates
