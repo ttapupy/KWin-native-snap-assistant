@@ -1,0 +1,11 @@
+{
+    "skipPickerOnKeyboardSnap": false,
+    "closePickerOnClickOutside": true,
+    "suppressPickerWhenAllFilled": true,
+    "enableMultiZoneChaining": true,
+    "autoSelectSingleCandidate": false,
+    "showNumberShortcuts": true,
+    "showWindowIcons": true,
+    "showCloseButtonOnHover": true,
+    "animationSpeedMs": 220
+}
